@@ -1,18 +1,9 @@
 import logging
 
 from dotenv import load_dotenv
-from livekit import rtc
-from livekit.agents import (
-    Agent,
-    AgentServer,
-    AgentSession,
-    JobContext,
-    JobProcess,
-    cli,
-    inference,
-    room_io,
-)
-from livekit.plugins import noise_cancellation, silero
+from livekit import agents, rtc
+from livekit.agents import AgentServer, AgentSession, Agent, JobProcess, room_io
+from livekit.plugins import noise_cancellation, silero, groq, deepgram
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
@@ -57,34 +48,26 @@ def prewarm(proc: JobProcess):
 server.setup_fnc = prewarm
 
 
-@server.rtc_session()
-async def my_agent(ctx: JobContext):
+@server.rtc_session(agent_name="Mark")
+async def my_agent(ctx: agents.JobContext):
     # Logging setup
-    # Add any other context you want in all log entries here
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
 
-    # Set up a voice AI pipeline using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
+    # Set up a voice AI pipeline using Groq LLM and Deepgram STT/TTS
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=inference.STT(model="assemblyai/universal-streaming", language="en"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=inference.LLM(model="openai/gpt-4.1-mini"),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        tts=inference.TTS(
-            model="cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+        stt=deepgram.STT(
+            model="nova-2",
         ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+        llm=groq.LLM(
+            model="llama-3.3-70b-versatile"
+        ),
+        tts=deepgram.TTS(
+            model="aura-2-asteria-en",
+        ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
-        preemptive_generation=True,
     )
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
@@ -118,9 +101,11 @@ async def my_agent(ctx: JobContext):
         ),
     )
 
-    # Join the room and connect to the user
-    await ctx.connect()
+    # Generate initial greeting
+    await session.generate_reply(
+        instructions="Greet the user and offer your assistance."
+    )
 
 
 if __name__ == "__main__":
-    cli.run_app(server)
+    agents.cli.run_app(server)
